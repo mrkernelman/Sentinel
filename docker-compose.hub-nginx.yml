@@ -1,0 +1,33 @@
+# nginx same-origin overlay for the Docker Hub team deployment.
+# Keeps the Hub backend image as-is (ML artifacts baked in — no local
+# ml/artifacts/data/ needed), but the Hub *frontend* image was built with
+# NEXT_PUBLIC_API_URL baked to an absolute host, so it only works from one
+# client address (see docker-compose.nginx.yml / CLAUDE.md for the full
+# explanation). This overlay replaces just the frontend with a local build
+# using NEXT_PUBLIC_API_URL="" (relative) and puts nginx in front of both
+# on one origin, same as docker-compose.nginx.yml.
+#
+#   docker compose -f docker-compose.hub.yml -f docker-compose.hub-nginx.yml up -d --build
+#   Dashboard: http://<any-reachable-host-or-IP>:8080
+services:
+  backend:
+    ports: !reset []          # no longer published directly — only nginx is
+
+  frontend:
+    image: !reset null
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ""
+    ports: !reset []
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro

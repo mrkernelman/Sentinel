@@ -219,6 +219,15 @@ Applied a security-review batch (findings 3–8 + hygiene; secrets/default-creds
 
 ---
 
+## Portable Deployment — nginx same-origin overlay (added 2026-07-11)
+Bug: `NEXT_PUBLIC_API_URL` is a Next.js **build-time** value baked verbatim into the static JS bundle (`.next/static/chunks/...`). `docker-compose.yml` baked in `http://localhost:5000`, so the dashboard only worked for browsers on the exact machine running Docker — any other client on the LAN (e.g. reaching the host by its LAN IP) got network errors from the JS trying to call a `localhost` that wasn't itself.
+- **Fix — `lib/api.ts`:** axios `baseURL` now falls back with `??` instead of `||`, so `NEXT_PUBLIC_API_URL=""` (relative) is honored instead of being treated as unset. A relative baseURL means every API call resolves against whatever origin/host actually served the page — no IP or hostname baked in at all.
+- **`docker-compose.nginx.yml` overlay** (`docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d --build`, dashboard on `:8080`) builds the frontend with `NEXT_PUBLIC_API_URL=""` and puts `deploy/nginx.conf` in front of both frontend and backend on one origin (`/api/*` → backend:5000, `/*` → frontend:3000) — same pattern as the Caddy TLS overlay, minus TLS. Use this over the Caddy overlay when you need plain HTTP reachable by a raw IP (Caddy's automatic HTTPS needs a real hostname to issue a cert for).
+- Verified end-to-end: with the stack up, `/api/auth/login` through nginx succeeds identically whether reached via `127.0.0.1:8080`, a spoofed `Host: 10.99.99.99` header, or the nginx container's own bridge IP — confirming no host/IP is baked into the served frontend.
+- Docker Hub images (`docker-compose.hub.yml`) are pre-built with the old absolute `NEXT_PUBLIC_API_URL` and are **not** affected by this fix — they'd need a rebuild-and-repush with `NEXT_PUBLIC_API_URL=""` to benefit (not done here; ask before touching published Hub images).
+
+---
+
 ## API Reference
 
 Protected routes accept the auth token via an **HttpOnly cookie** (browser, set at login) or an `Authorization: Bearer <token>` header (API clients).

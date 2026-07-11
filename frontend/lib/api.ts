@@ -2,7 +2,10 @@ import axios from 'axios'
 import Cookies from 'js-cookie'
 
 const api = axios.create({
-    baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000',
+    // ?? (not ||) so NEXT_PUBLIC_API_URL="" is honored as "relative to
+    // whatever origin served this page" — the same-origin nginx/Caddy
+    // reverse-proxy deployments rely on that to avoid baking in a host IP.
+    baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000',
     // Send the HttpOnly auth cookie on every request (and store it from the
     // login response). No Authorization header is needed anymore.
     withCredentials: true,

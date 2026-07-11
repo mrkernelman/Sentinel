@@ -1,0 +1,36 @@
+# nginx same-origin overlay — fixes the "dashboard only works from
+# localhost" bug: NEXT_PUBLIC_API_URL is a Next.js build-time value baked
+# into the static JS bundle, so hardcoding an IP/hostname there only works
+# for clients on that exact address. This overlay puts nginx in front of
+# both frontend and backend so the browser talks to ONE origin (whatever
+# host/IP/port it used to reach nginx) and never needs to know the
+# backend's real address — /api/* is proxied to the backend container-side.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d --build
+#   Dashboard: http://<any-reachable-host-or-IP>:8080
+#
+# Equivalent in spirit to docker-compose.tls.yml (deploy/Caddyfile), minus
+# TLS — use this when you need plain HTTP reachable by raw IP (Caddy's
+# automatic HTTPS needs a real hostname to issue a cert for).
+services:
+  backend:
+    ports: !reset []          # no longer published directly — only nginx is
+
+  frontend:
+    build:
+      args:
+        # "" (relative) — resolved against whatever origin/host the browser
+        # used to load the page, instead of a value baked in for one host.
+        NEXT_PUBLIC_API_URL: ""
+    ports: !reset []
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
