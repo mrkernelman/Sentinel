@@ -4,6 +4,8 @@
 > Algorithm: Isolation Forest (scikit-learn) · Stack: Python · Flask · React.js · PostgreSQL  
 > Dataset: CICIDS2017 — 8 real-world network traffic captures (~3.1 million flows)
 
+> **Active repo:** development has moved to [github.com/mrkernelman/Sentinel](https://github.com/mrkernelman/Sentinel) — please open issues/PRs there.
+
 ---
 
 ## Prerequisites
