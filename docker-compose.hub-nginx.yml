@@ -1,7 +1,6 @@
-# Standalone same-origin nginx deployment — Docker Hub images only (no
-# local build, no ml/artifacts/data/ needed) + an nginx reverse proxy,
-# all in ONE file. No other compose file needed — this replaces
-# docker-compose.hub.yml rather than overlaying it.
+# Same-origin nginx deployment — Docker Hub images only (no local build,
+# no ml/artifacts/data/ needed) + an nginx reverse proxy, all in ONE file.
+# The team-access deployment path — clone the repo and run:
 #
 #   docker compose -f docker-compose.hub-nginx.yml up -d
 #   Dashboard: http://<any-reachable-host-or-IP>:8080  (admin/admin123)
