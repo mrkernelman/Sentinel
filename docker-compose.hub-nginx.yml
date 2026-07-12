@@ -1,18 +1,18 @@
-# Standalone same-origin nginx deployment — Docker Hub backend (ML
-# artifacts baked in, no local ml/artifacts/data/ needed) + a locally-built
-# frontend (relative API URL) + an nginx reverse proxy, all in ONE file.
-# No other compose file needed — this replaces docker-compose.hub.yml
-# rather than overlaying it.
+# Standalone same-origin nginx deployment — Docker Hub images only (no
+# local build, no ml/artifacts/data/ needed) + an nginx reverse proxy,
+# all in ONE file. No other compose file needed — this replaces
+# docker-compose.hub.yml rather than overlaying it.
 #
-#   docker compose -f docker-compose.hub-nginx.yml up -d --build
+#   docker compose -f docker-compose.hub-nginx.yml up -d
 #   Dashboard: http://<any-reachable-host-or-IP>:8080  (admin/admin123)
 #
-# Why the frontend is a local build and not the Hub image: the published
-# jeffreyjr/shadow-it-frontend image was built with NEXT_PUBLIC_API_URL
-# baked to an absolute host, which only works for clients on that one
-# address (see CLAUDE.md "Portable Deployment"). This file fixes that by
-# building the frontend with a relative URL and serving both frontend and
-# backend from one nginx origin.
+# Why a separate frontend image (radio123/shadow-it-frontend) instead of
+# the original jeffreyjr/shadow-it-frontend: the original was built with
+# NEXT_PUBLIC_API_URL baked to an absolute host, which only works for
+# clients on that one address (see CLAUDE.md "Portable Deployment").
+# radio123/shadow-it-frontend is the same source rebuilt with
+# NEXT_PUBLIC_API_URL="" (relative) so it works from any host once nginx
+# fronts it — no local build step needed even on a fresh clone.
 #
 # Not available in this mode:
 #   - Run Detection (needs the ~850MB CICIDS2017 CSVs; uncomment the data
@@ -56,13 +56,8 @@ services:
     #   - ./data:/app/data:ro   # CICIDS2017 CSVs — enables Run Detection
 
   frontend:
+    image: radio123/shadow-it-frontend:latest
     restart: unless-stopped
-    build:
-      context: ./frontend
-      args:
-        # "" (relative) — resolved against whatever origin/host the browser
-        # used to load the page, instead of a value baked in for one host.
-        NEXT_PUBLIC_API_URL: ""
     depends_on:
       - backend
 
