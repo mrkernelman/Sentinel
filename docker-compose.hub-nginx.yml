@@ -1,25 +1,70 @@
-# nginx same-origin overlay for the Docker Hub team deployment.
-# Keeps the Hub backend image as-is (ML artifacts baked in — no local
-# ml/artifacts/data/ needed), but the Hub *frontend* image was built with
-# NEXT_PUBLIC_API_URL baked to an absolute host, so it only works from one
-# client address (see docker-compose.nginx.yml / CLAUDE.md for the full
-# explanation). This overlay replaces just the frontend with a local build
-# using NEXT_PUBLIC_API_URL="" (relative) and puts nginx in front of both
-# on one origin, same as docker-compose.nginx.yml.
+# Standalone same-origin nginx deployment — Docker Hub backend (ML
+# artifacts baked in, no local ml/artifacts/data/ needed) + a locally-built
+# frontend (relative API URL) + an nginx reverse proxy, all in ONE file.
+# No other compose file needed — this replaces docker-compose.hub.yml
+# rather than overlaying it.
 #
-#   docker compose -f docker-compose.hub.yml -f docker-compose.hub-nginx.yml up -d --build
-#   Dashboard: http://<any-reachable-host-or-IP>:8080
+#   docker compose -f docker-compose.hub-nginx.yml up -d --build
+#   Dashboard: http://<any-reachable-host-or-IP>:8080  (admin/admin123)
+#
+# Why the frontend is a local build and not the Hub image: the published
+# jeffreyjr/shadow-it-frontend image was built with NEXT_PUBLIC_API_URL
+# baked to an absolute host, which only works for clients on that one
+# address (see CLAUDE.md "Portable Deployment"). This file fixes that by
+# building the frontend with a relative URL and serving both frontend and
+# backend from one nginx origin.
+#
+# Not available in this mode:
+#   - Run Detection (needs the ~850MB CICIDS2017 CSVs; uncomment the data
+#     volume below and place the CSVs in ./data to enable it)
+#   - Live Scan (host-only in any Docker mode)
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: shadow_it_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_docker_2026
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/immutability.sql:/docker-entrypoint-initdb.d/02-immutability.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shadow_it_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   backend:
-    ports: !reset []          # no longer published directly — only nginx is
+    image: jeffreyjr/shadow-it-backend:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: shadow_it_db
+      DB_USER: shadow_it_app
+      DB_PASSWORD: sh4d0w_app_2026
+      JWT_SECRET: change-this-to-a-long-random-secret-for-production
+      JWT_EXPIRY_HOURS: "8"
+      FLASK_ENV: production
+    # not published directly — only nginx is, below
+    # volumes:
+    #   - ./data:/app/data:ro   # CICIDS2017 CSVs — enables Run Detection
 
   frontend:
-    image: !reset null
+    restart: unless-stopped
     build:
       context: ./frontend
       args:
+        # "" (relative) — resolved against whatever origin/host the browser
+        # used to load the page, instead of a value baked in for one host.
         NEXT_PUBLIC_API_URL: ""
-    ports: !reset []
+    depends_on:
+      - backend
 
   nginx:
     image: nginx:alpine
@@ -31,3 +76,6 @@ services:
       - "8080:80"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  pgdata:
