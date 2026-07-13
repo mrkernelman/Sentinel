@@ -5,7 +5,8 @@ import GlassCard from '@/components/ui/GlassCard'
 import AnimatedCounter from '@/components/ui/AnimatedCounter'
 import { StatusIcon } from '@/components/ui/StatusIcon'
 import { Monitor, AlertCircle, Loader2 } from 'lucide-react'
-import { fetchAllDetections, groupByDevice, type DeviceAggregate } from '@/lib/aggregate'
+import { fetchAllDetections, groupByDevice, mergeDeviceSightings, type DeviceAggregate } from '@/lib/aggregate'
+import { devicesApi } from '@/lib/api'
 
 const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -35,8 +36,11 @@ export default function DevicesPage() {
         (async () => {
             setLoading(true)
             try {
-                const { rows } = await fetchAllDetections(500)
-                setDevices(groupByDevice(rows))
+                const [{ rows }, sightingsRes] = await Promise.all([
+                    fetchAllDetections(500),
+                    devicesApi.sightings().catch(() => ({ data: { devices: [] } })),
+                ])
+                setDevices(mergeDeviceSightings(groupByDevice(rows), sightingsRes.data.devices || []))
                 setScanned(rows.length)
             } catch (err) {
                 console.error(err)
@@ -95,6 +99,7 @@ export default function DevicesPage() {
                                     <th className="text-left py-3 px-4">Device Type</th>
                                     <th className="text-left py-3 px-4">Detections</th>
                                     <th className="text-left py-3 px-4">Highest Risk</th>
+                                    <th className="text-left py-3 px-4">First Seen</th>
                                     <th className="text-left py-3 px-4">Last Seen</th>
                                 </tr>
                             </thead>
@@ -113,6 +118,7 @@ export default function DevicesPage() {
                                                     <StatusIcon status={riskConfig.status} size="sm" /> {device.risk.toUpperCase()}
                                                 </div>
                                             </td>
+                                            <td className="py-3 px-4 text-xs text-slate-500">{formatLastSeen(device.firstSeen ?? null)}</td>
                                             <td className="py-3 px-4 text-xs text-slate-500">{formatLastSeen(device.lastSeen)}</td>
                                         </motion.tr>
                                     )

@@ -1,5 +1,5 @@
 import { detectionsApi } from './api'
-import type { Detection, RiskLevel, ShadowItType } from './types'
+import type { Detection, DetectionSource, RiskLevel, ShadowItType, DeviceSighting } from './types'
 
 const RISK_RANK: Record<RiskLevel, number> = { high: 3, medium: 2, low: 1 }
 const higherRisk = (a: RiskLevel, b: RiskLevel) => (RISK_RANK[b] > RISK_RANK[a] ? b : a)
@@ -29,6 +29,23 @@ export interface DeviceAggregate {
     count: number
     risk: RiskLevel
     lastSeen: string | null
+    // Filled in by mergeDeviceSightings() from /api/devices/sightings --
+    // undefined until a device_sightings row exists for this device (e.g. a
+    // device only known from dataset-run detections was never actually
+    // "seen" by the live collector).
+    firstSeen?: string
+    source?: DetectionSource
+}
+
+// Merges the durable first-seen registry (ml/collector.py, via
+// /api/devices/sightings) into the detection-derived aggregate, keyed the
+// same way groupByDevice() keys its map (src_ip, falling back to src_mac).
+export function mergeDeviceSightings(devices: DeviceAggregate[], sightings: DeviceSighting[]): DeviceAggregate[] {
+    const byKey = new Map(sightings.map((s) => [s.src_ip || s.src_mac || 'unknown', s]))
+    return devices.map((d) => {
+        const s = byKey.get(d.src_ip || d.src_mac || 'unknown')
+        return s ? { ...d, firstSeen: s.first_seen, source: s.source } : d
+    })
 }
 
 export function groupByDevice(rows: Detection[]): DeviceAggregate[] {

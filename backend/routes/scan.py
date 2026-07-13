@@ -112,8 +112,8 @@ def detections():
             """INSERT INTO detections
                (src_ip, src_mac, dst_domain, protocol,
                 bytes_sent, bytes_received, duration, device_type,
-                shadow_it_type, risk_level, anomaly_score)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                shadow_it_type, risk_level, anomaly_score, source)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'live')""",
             (
                 r["src_ip"],
                 r.get("src_mac", "Live"),
@@ -131,3 +131,29 @@ def detections():
         saved.append(r)
 
     return jsonify({"detections": saved, "count": len(saved)})
+
+
+# ── GET /api/scan/devices ───────────────────────────────────────────────────
+# New devices seen since the last drain -- distinct from /detections, which
+# only ever surfaces flows that got flagged anomalous. This fires the moment
+# a device is seen at all, so it can back a "device connected" notification
+# before any threat verdict exists.
+@scan_bp.route("/devices", methods=["GET"])
+@token_required
+@admin_required
+def devices():
+    col, err = _col()
+    if err:
+        return jsonify({"new_devices": [], "count": 0})
+
+    new = col.pop_new_devices()
+    for d in new:
+        execute(
+            """INSERT INTO device_sightings (src_ip, src_mac, source)
+               VALUES (%s, %s, 'live')
+               ON CONFLICT (src_ip, src_mac) DO UPDATE
+                 SET last_seen = NOW(), sightings_count = device_sightings.sightings_count + 1""",
+            (d["src_ip"], d["src_mac"]),
+        )
+
+    return jsonify({"new_devices": new, "count": len(new)})

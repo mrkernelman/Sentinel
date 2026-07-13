@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS detections (
     risk_level      VARCHAR(10),
     anomaly_score   FLOAT,
     detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_resolved     BOOLEAN NOT NULL DEFAULT FALSE
+    is_resolved     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- 'live' (ml/collector.py, real-time capture) or 'dataset' (/api/run-detection,
+    -- CICIDS2017) -- lets the UI show which one produced a given row.
+    source          VARCHAR(10) NOT NULL DEFAULT 'dataset'
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -45,9 +48,26 @@ CREATE TABLE IF NOT EXISTS token_denylist (
     expires_at  TIMESTAMPTZ NOT NULL
 );
 
+-- First-seen device registry (ml/collector.py) -- populated the moment a
+-- device is observed talking on the network, independent of whether any of
+-- its traffic ever gets flagged as anomalous. Backs the Devices page and the
+-- Topbar "new device connected" notification.
+CREATE TABLE IF NOT EXISTS device_sightings (
+    id               SERIAL PRIMARY KEY,
+    src_ip           VARCHAR(45) NOT NULL,
+    src_mac          VARCHAR(17),
+    source           VARCHAR(10) NOT NULL DEFAULT 'live',
+    first_seen       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sightings_count  INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (src_ip, src_mac)
+);
+
 CREATE INDEX IF NOT EXISTS idx_detections_detected_at    ON detections(detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_detections_risk_level     ON detections(risk_level);
 CREATE INDEX IF NOT EXISTS idx_detections_shadow_it_type ON detections(shadow_it_type);
 CREATE INDEX IF NOT EXISTS idx_detections_is_resolved    ON detections(is_resolved);
+CREATE INDEX IF NOT EXISTS idx_detections_source         ON detections(source);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id        ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp      ON audit_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_device_sightings_last_seen ON device_sightings(last_seen DESC);

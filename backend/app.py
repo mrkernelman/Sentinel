@@ -30,11 +30,23 @@ def create_app() -> Flask:
 
     # Ensure the token-revocation table exists (idempotent; covers existing
     # DB volumes where initdb scripts won't re-run).
-    from backend.models.db_models import ensure_auth_schema
+    from backend.models.db_models import (
+        ensure_auth_schema,
+        ensure_detections_source_column,
+        ensure_device_sightings_schema,
+    )
     try:
         ensure_auth_schema()
     except Exception as exc:
         log.warning("Could not ensure auth schema at startup: %s", exc)
+    try:
+        ensure_detections_source_column()
+    except Exception as exc:
+        log.warning("Could not ensure detections.source column at startup: %s", exc)
+    try:
+        ensure_device_sightings_schema()
+    except Exception as exc:
+        log.warning("Could not ensure device_sightings schema at startup: %s", exc)
 
     from backend.routes.auth       import auth_bp
     from backend.routes.detections import detections_bp
@@ -43,6 +55,7 @@ def create_app() -> Flask:
     from backend.routes.metrics    import metrics_bp
     from backend.routes.scan       import scan_bp
     from backend.routes.report     import report_bp
+    from backend.routes.devices    import devices_bp
 
     app.register_blueprint(auth_bp,       url_prefix="/api/auth")
     app.register_blueprint(detections_bp, url_prefix="/api/detections")
@@ -51,6 +64,7 @@ def create_app() -> Flask:
     app.register_blueprint(metrics_bp,    url_prefix="/api/metrics")
     app.register_blueprint(scan_bp,       url_prefix="/api/scan")
     app.register_blueprint(report_bp,     url_prefix="/api/report")
+    app.register_blueprint(devices_bp,    url_prefix="/api/devices")
 
     # ── POST /api/run-detection  (admin only) ──────────────────────────────────
     from backend.middleware.jwt_auth import token_required
@@ -75,8 +89,8 @@ def create_app() -> Flask:
                     """INSERT INTO detections
                        (src_ip, src_mac, dst_domain, protocol,
                         bytes_sent, bytes_received, duration, device_type,
-                        shadow_it_type, risk_level, anomaly_score)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        shadow_it_type, risk_level, anomaly_score, source)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'dataset')""",
                     (r["src_ip"], r["src_mac"], r["dst_domain"], r["protocol"],
                      r["bytes_sent"], r["bytes_received"], r["duration"], r["device_type"],
                      r["shadow_it_type"], r["risk_level"], r["anomaly_score"]),

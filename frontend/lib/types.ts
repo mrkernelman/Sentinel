@@ -6,6 +6,7 @@ export interface User {
 
 export type ShadowItType = 'hardware' | 'software' | 'mixed'
 export type RiskLevel = 'high' | 'medium' | 'low'
+export type DetectionSource = 'live' | 'dataset'
 
 export interface Detection {
     id: number
@@ -22,6 +23,7 @@ export interface Detection {
     anomaly_score: number | null
     detected_at: string
     is_resolved: boolean
+    source: DetectionSource
 }
 
 export interface AuditLog {
@@ -115,6 +117,7 @@ export interface ScanStatus {
     flows_analysed: number
     active_flows: number
     detections_found: number
+    known_devices_count?: number
     uptime_s: number
     errors: string[]
     error?: string
@@ -124,4 +127,19 @@ export interface NetworkInterface {
     device: string
     description: string
     ip: string | null
+}
+
+export interface NewDeviceEvent {
+    src_ip: string
+    src_mac: string
+    first_seen: number
+}
+
+export interface DeviceSighting {
+    src_ip: string
+    src_mac: string | null
+    source: DetectionSource
+    first_seen: string
+    last_seen: string
+    sightings_count: number
 }

@@ -3,8 +3,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import Cookies from 'js-cookie'
-import { clearAuth } from '@/lib/auth'
-import { authApi, statsApi } from '@/lib/api'
+import { clearAuth, isAdmin } from '@/lib/auth'
+import { authApi, statsApi, scanApi } from '@/lib/api'
 import {
     Search, Bell, Moon, Sun, UserCircle, Settings, LogOut,
     LayoutDashboard, AlertCircle, Monitor, Package, FileText, BarChart3, Wifi,
@@ -44,10 +44,12 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
     const [searchOpen,       setSearchOpen]       = useState(false)
     const [activeIndex,      setActiveIndex]      = useState(0)
     const [highUnresolved,   setHighUnresolved]   = useState(0)
+    const [newDeviceCount,   setNewDeviceCount]   = useState(0)
 
     const searchRef  = useRef<HTMLDivElement>(null)
     const inputRef   = useRef<HTMLInputElement>(null)
     const notifTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const wasScanRunningRef = useRef(false)
     const router = useRouter()
 
     useEffect(() => {
@@ -64,6 +66,30 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
             statsApi.alerts().then((r) => setHighUnresolved(r.data.high_unresolved)).catch(() => {})
         fetchAlerts()
         const t = setInterval(fetchAlerts, 60_000)
+        return () => clearInterval(t)
+    }, [])
+
+    // "Device connected" notifications -- admin-only, same polling cadence as
+    // the alerts bell above. Only calls /api/scan/devices (which drains the
+    // collector's new-device buffer) while a scan is actually running, so
+    // non-live-scan admins aren't polling it for nothing. The counter resets
+    // when a fresh session starts (this browser observes running go false->true).
+    useEffect(() => {
+        if (!isAdmin()) return
+        const fetchNewDevices = async () => {
+            try {
+                const st = await scanApi.status()
+                const running = !!st.data.running
+                if (running && !wasScanRunningRef.current) setNewDeviceCount(0)
+                wasScanRunningRef.current = running
+                if (running) {
+                    const nd = await scanApi.newDevices()
+                    if (nd.data.count > 0) setNewDeviceCount((c) => c + nd.data.count)
+                }
+            } catch { /* transient poll failure, retried on next interval */ }
+        }
+        fetchNewDevices()
+        const t = setInterval(fetchNewDevices, 60_000)
         return () => clearInterval(t)
     }, [])
 
@@ -283,6 +309,20 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
                                             <p className="text-sm text-slate-400">No unresolved high-risk alerts</p>
                                         )}
                                     </button>
+
+                                    {isAdmin() && newDeviceCount > 0 && (
+                                        <button
+                                            onClick={() => { closeNotif(); router.push('/dashboard/live-scan') }}
+                                            className="w-full text-left px-4 py-4 border-t border-white/10 transition-colors hover:bg-white/5"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                                                <p className="text-sm text-white">
+                                                    <span className="font-bold text-blue-400">{newDeviceCount}</span> new device{newDeviceCount === 1 ? '' : 's'} seen this session — view Live Scan →
+                                                </p>
+                                            </div>
+                                        </button>
+                                    )}
                                 </motion.div>
                             )}
                         </AnimatePresence>

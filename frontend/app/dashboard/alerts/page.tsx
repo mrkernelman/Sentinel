@@ -46,7 +46,7 @@ function AlertsPageInner() {
     const load = useCallback(async () => {
         setLoading(true)
         try {
-            const params: Record<string, unknown> = { page, per_page: PAGE_SIZE }
+            const params: Record<string, unknown> = { page, per_page: PAGE_SIZE, source: 'live' }
             if (typeFilter) params.type = typeFilter
             if (riskFilter) params.risk = riskFilter
             const res = await detectionsApi.list(params)
@@ -79,7 +79,7 @@ function AlertsPageInner() {
     const handleExport = async () => {
         setExporting(true)
         try {
-            const params: Record<string, unknown> = {}
+            const params: Record<string, unknown> = { source: 'live' }
             if (typeFilter) params.type = typeFilter
             if (riskFilter) params.risk = riskFilter
             const res = await detectionsApi.export(params)
@@ -170,6 +170,7 @@ function AlertsPageInner() {
                                         <th className="text-left py-3 px-4">Source IP</th>
                                         <th className="text-left py-3 px-4">Destination</th>
                                         <th className="text-left py-3 px-4">Type</th>
+                                        <th className="text-left py-3 px-4">Source</th>
                                         <th className="text-left py-3 px-4">Risk Level</th>
                                         <th className="text-left py-3 px-4">Score</th>
                                         <th className="text-left py-3 px-4">Status</th>
@@ -187,6 +188,11 @@ function AlertsPageInner() {
                                                 <td className="py-3 px-4 text-xs font-mono text-slate-700 dark:text-slate-300">{detection.src_ip}</td>
                                                 <td className="py-3 px-4 text-xs text-slate-700 dark:text-slate-300 max-w-[180px] truncate">{detection.dst_domain || '—'}</td>
                                                 <td className="py-3 px-4 text-xs"><span className="px-2 py-1 rounded bg-blue-500/20 text-blue-300">{detection.shadow_it_type || 'Unknown'}</span></td>
+                                                <td className="py-3 px-4 text-xs">
+                                                    <span className={`px-2 py-1 rounded ${detection.source === 'live' ? 'bg-red-500/15 text-red-400' : 'bg-slate-500/15 text-slate-400'}`}>
+                                                        {detection.source === 'live' ? 'Live' : 'Dataset'}
+                                                    </span>
+                                                </td>
                                                 <td className="py-3 px-4">
                                                     <div className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${riskConfig.bg} border ${riskConfig.border}`}>
                                                         <StatusIcon status={riskConfig.status} size="sm" /> {detection.risk_level?.toUpperCase()}
@@ -269,6 +275,7 @@ function AlertsPageInner() {
                                         { label: 'Protocol', value: selected.protocol || '—' },
                                         { label: 'Device Type', value: selected.device_type || '—' },
                                         { label: 'Shadow IT Type', value: selected.shadow_it_type || '—' },
+                                        { label: 'Source', value: selected.source === 'live' ? 'Live Scan' : 'Dataset' },
                                         { label: 'Bytes Sent', value: `${selected.bytes_sent.toLocaleString()} B` },
                                         { label: 'Bytes Received', value: `${selected.bytes_received.toLocaleString()} B` },
                                         { label: 'Duration', value: `${selected.duration}s` },

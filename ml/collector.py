@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time
 import threading
+import ipaddress
 import numpy as np
 
 try:
@@ -21,6 +22,23 @@ try:
     SCAPY_AVAILABLE = True
 except Exception:
     SCAPY_AVAILABLE = False
+
+
+def _is_local(ip: str) -> bool:
+    """True for RFC1918/loopback/link-local addresses — i.e. a LAN endpoint,
+    not an internet destination. Scan scope is devices on this network."""
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
+
+
+# Sentinel's own dashboard/API ports. Traffic here is this tool being used
+# (a browser polling its own REST API every few seconds), not a Shadow IT
+# flow — its bursty, repetitive shape looks nothing like CICIDS "benign"
+# traffic and gets flagged by the model. Excluded from flow analysis; the
+# device is still discovered via any of its other LAN packets.
+_SELF_PORTS = {5000, 8080, 3000}
 
 
 # ── Service-name extraction (SNI / HTTP Host) ──────────────────────────────────
@@ -217,6 +235,11 @@ class NetworkCollector:
         self.started_at      = None
         self._detections     = []
         self._errors         = []
+        # First-seen device tracking -- separate from anomaly detection, so a
+        # device shows up the moment it's seen at all, not only once/if one
+        # of its flows gets flagged. Keyed by (src_ip, src_mac).
+        self._known_devices     = {}
+        self._new_device_events = []
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -233,16 +256,30 @@ class NetworkCollector:
         if not pkt.haslayer(IP):
             return
 
+        ip     = pkt[IP]
+        src_ip = ip.src
+        dst_ip = ip.dst
+
+        # Scope to this network: device discovery and anomaly detection are
+        # about LAN devices, not the internet destinations they talk to.
+        if not (_is_local(src_ip) and _is_local(dst_ip)):
+            return
+
         self.packets_seen += 1
-        ip      = pkt[IP]
-        src_ip  = ip.src
-        dst_ip  = ip.dst
         proto   = ip.proto
         src_port = dst_port = flags = window = 0
         src_mac = ""
 
         if pkt.haslayer(Ether):
             src_mac = pkt[Ether].src
+
+        ts = time.time()
+        with self._lock:
+            dev_key = (src_ip, src_mac)
+            if dev_key not in self._known_devices:
+                device = {"src_ip": src_ip, "src_mac": src_mac, "first_seen": ts}
+                self._known_devices[dev_key] = device
+                self._new_device_events.append(device)
 
         payload = b""
         if pkt.haslayer(TCP):
@@ -257,8 +294,10 @@ class NetworkCollector:
             src_port = u.sport
             dst_port = u.dport
 
+        if src_port in _SELF_PORTS or dst_port in _SELF_PORTS:
+            return
+
         length = len(pkt)
-        ts     = time.time()
         key    = self._flow_key(src_ip, dst_ip, src_port, dst_port, proto)
 
         with self._lock:
@@ -328,6 +367,8 @@ class NetworkCollector:
         self._detections    = []
         self._errors        = []
         self._flows         = {}
+        self._known_devices     = {}
+        self._new_device_events = []
 
         self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
         self._flush_thread.start()
@@ -345,13 +386,14 @@ class NetworkCollector:
     def status(self) -> dict:
         uptime = round(time.time() - self.started_at, 1) if self.started_at and self._running else 0
         return {
-            "running":          self._running,
-            "packets_seen":     self.packets_seen,
-            "flows_analysed":   self.flows_analysed,
-            "active_flows":     len(self._flows),
-            "detections_found": len(self._detections),
-            "uptime_s":         uptime,
-            "errors":           self._errors[-5:],
+            "running":            self._running,
+            "packets_seen":       self.packets_seen,
+            "flows_analysed":     self.flows_analysed,
+            "active_flows":       len(self._flows),
+            "detections_found":   len(self._detections),
+            "known_devices_count": len(self._known_devices),
+            "uptime_s":           uptime,
+            "errors":             self._errors[-5:],
         }
 
     def flush_all(self):
@@ -379,6 +421,12 @@ class NetworkCollector:
         with self._lock:
             d = list(self._detections)
             self._detections = []
+            return d
+
+    def pop_new_devices(self) -> list:
+        with self._lock:
+            d = list(self._new_device_events)
+            self._new_device_events = []
             return d
 
 

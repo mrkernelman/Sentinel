@@ -79,6 +79,11 @@ export const scanApi = {
     status: () => api.get('/api/scan/status'),
     detections: () => api.get('/api/scan/detections'),
     flush: () => api.post('/api/scan/flush'),
+    newDevices: () => api.get('/api/scan/devices'),
+}
+
+export const devicesApi = {
+    sightings: () => api.get('/api/devices/sightings'),
 }
 
 export default api

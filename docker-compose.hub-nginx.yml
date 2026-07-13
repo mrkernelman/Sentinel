@@ -1,22 +1,39 @@
-# Same-origin nginx deployment — Docker Hub images only (no local build,
-# no ml/artifacts/data/ needed) + an nginx reverse proxy, all in ONE file.
-# The team-access deployment path — clone the repo and run:
+# Same-origin nginx deployment — an nginx reverse proxy in front of a
+# locally-built backend + frontend, all in ONE file.
 #
-#   docker compose -f docker-compose.hub-nginx.yml up -d
+#   docker compose -f docker-compose.hub-nginx.yml up -d --build
 #   Dashboard: http://<any-reachable-host-or-IP>:8080  (admin/admin123)
 #
-# Why a separate frontend image (radio123/shadow-it-frontend) instead of
-# the original jeffreyjr/shadow-it-frontend: the original was built with
-# NEXT_PUBLIC_API_URL baked to an absolute host, which only works for
-# clients on that one address (see CLAUDE.md "Portable Deployment").
-# radio123/shadow-it-frontend is the same source rebuilt with
-# NEXT_PUBLIC_API_URL="" (relative) so it works from any host once nginx
-# fronts it — no local build step needed even on a fresh clone.
+# Builds locally (changed 2026-07-13) rather than pulling the prebuilt
+# jeffreyjr/shadow-it-backend + radio123/shadow-it-frontend images: this repo
+# is under active development and those images are frozen snapshots from
+# 2026-07-06/11 that don't contain any code changes made since — pulling
+# them silently ships stale code with no error. `ml/artifacts/` (gitignored,
+# large) still needs to exist on the host — it was extracted once from the
+# jeffreyjr image via `docker cp` the same day this switched to a local
+# build; retrain with `python ml/model.py` if it's ever missing.
+#
+# Frontend is built with NEXT_PUBLIC_API_URL="" (relative) so it works from
+# any host once nginx fronts it same-origin (see CLAUDE.md "Portable
+# Deployment") — same reasoning that motivated the old radio123 image.
 #
 # Not available in this mode:
 #   - Run Detection (needs the ~850MB CICIDS2017 CSVs; uncomment the data
 #     volume below and place the CSVs in ./data to enable it)
-#   - Live Scan (host-only in any Docker mode)
+#
+# Live Scan (added 2026-07-13): backend runs with network_mode: host so Scapy
+# sees the real host NICs instead of just the Docker bridge -- this only
+# works because this stack runs on native Linux Docker (not Docker Desktop,
+# which can't expose host adapters to a container network namespace at all).
+# Trade-offs of network_mode: host, accepted here:
+#   - Flask binds directly to the HOST's 0.0.0.0:5000 (gunicorn's --bind),
+#     bypassing nginx's single-origin front door. JWT auth still protects
+#     every route, but if this matters on your network, firewall it off
+#     non-local interfaces, e.g. `ufw deny 5000/tcp` (can't be done at the
+#     compose level once the container shares the host's network stack).
+#   - The container drops off the compose bridge network entirely, so it can
+#     no longer resolve service names ("db") via Compose DNS -- see DB_HOST
+#     below, which reaches `db` through its loopback-published port instead.
 services:
   db:
     image: postgres:16-alpine
@@ -25,6 +42,14 @@ services:
       POSTGRES_DB: shadow_it_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres_docker_2026
+    ports:
+      # loopback-only: lets the host-networked backend reach db via
+      # 127.0.0.1 (exactly like any other host process reaching a published
+      # container port) without exposing Postgres on the LAN. Published on
+      # 5433, not 5432 -- this host already runs a native PostgreSQL on
+      # 127.0.0.1:5432 (the documented host-setup path in CLAUDE.md), and
+      # they'd otherwise collide.
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -36,26 +61,32 @@ services:
       retries: 20
 
   backend:
-    image: jeffreyjr/shadow-it-backend:latest
+    build: .
     restart: unless-stopped
+    network_mode: host
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DB_HOST: db
-      DB_PORT: "5432"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5433"
       DB_NAME: shadow_it_db
       DB_USER: shadow_it_app
       DB_PASSWORD: sh4d0w_app_2026
       JWT_SECRET: change-this-to-a-long-random-secret-for-production
       JWT_EXPIRY_HOURS: "8"
       FLASK_ENV: production
-    # not published directly — only nginx is, below
-    # volumes:
-    #   - ./data:/app/data:ro   # CICIDS2017 CSVs — enables Run Detection
+    volumes:
+      - ./ml/artifacts:/app/ml/artifacts:ro
+      # - ./data:/app/data:ro   # CICIDS2017 CSVs — enables Run Detection
+    # no `ports:` -- network_mode: host binds gunicorn directly to the
+    # host's port 5000; a `ports:` mapping would be dead config here.
 
   frontend:
-    image: radio123/shadow-it-frontend:latest
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ""
     restart: unless-stopped
     depends_on:
       - backend
@@ -66,6 +97,12 @@ services:
     depends_on:
       - backend
       - frontend
+    extra_hosts:
+      # backend is no longer reachable as "backend:5000" (host network mode
+      # drops it off the compose bridge's DNS) -- reach it via the host
+      # gateway instead. host-gateway is supported on native Linux Docker
+      # Engine >=20.10, not just Docker Desktop.
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:80"
     volumes:

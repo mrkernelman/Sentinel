@@ -32,4 +32,16 @@ COPY db/ db/
 
 EXPOSE 5000
 # exec: gunicorn becomes PID 1 and receives SIGTERM -> graceful shutdown
-CMD ["sh", "-c", "python db/seed.py && exec gunicorn --workers 2 --bind 0.0.0.0:5000 'backend.app:create_app()'"]
+#
+# --workers 1: the Live Scan collector (ml/collector.py) is an in-memory
+# singleton, not shared across processes. With >1 worker, requests
+# round-robin between independent collectors, so /api/scan/start can land
+# on one worker while /api/scan/status polls another that never started
+# anything -- looks like the scan randomly stops/restarts. One worker means
+# one collector, so there's nothing to desync. Single-threaded API is an
+# accepted trade-off at this app's request volume.
+# --timeout 120: gives long-running /api/scan/flush or /api/scan/detections
+# calls headroom so gunicorn's watchdog doesn't SIGKILL the whole worker
+# process mid-request -- which would also kill the collector's daemon
+# threads living in it.
+CMD ["sh", "-c", "python db/seed.py && exec gunicorn --workers 1 --timeout 120 --bind 0.0.0.0:5000 'backend.app:create_app()'"]

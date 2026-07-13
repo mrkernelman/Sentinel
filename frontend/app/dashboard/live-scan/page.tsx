@@ -1,15 +1,17 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Play, Square, RefreshCw, Radio, Wifi } from 'lucide-react'
+import { Play, Square, RefreshCw, Radio, Wifi, ArrowRight } from 'lucide-react'
 import GlassCard from '@/components/ui/GlassCard'
 import { StatusIcon } from '@/components/ui/StatusIcon'
 import { scanApi, apiErrorMessage } from '@/lib/api'
 import { isAdmin } from '@/lib/auth'
+import { groupByDevice } from '@/lib/aggregate'
 import type { ScanStatus, Detection, NetworkInterface } from '@/lib/types'
 
 const POLL_MS = 5000
+const IDLE_POLL_MS = 15000
 
 const StatBox = ({ label, value, color }: { label: string; value: string | number; color: string }) => (
     <div className="flex-1 min-w-[90px] rounded-xl p-3.5 text-center bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10">
@@ -49,7 +51,10 @@ export default function LiveScanPage() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [ifaceErr, setIfaceErr] = useState('')
+    const [stoppedByUser, setStoppedByUser] = useState(false)
+    const [unexpectedStop, setUnexpectedStop] = useState(false)
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const wasRunningRef = useRef(false)
 
     useEffect(() => {
         scanApi.interfaces()
@@ -75,19 +80,38 @@ export default function LiveScanPage() {
         } catch { /* transient poll failure, retried on next interval */ }
     }, [])
 
+    // Status-only poll used while not running -- keeps watching in case the
+    // backend is still running from another session, or comes back up,
+    // instead of going silent forever the moment `running` is seen false.
+    const pollStatusOnly = useCallback(async () => {
+        try {
+            const st = await scanApi.status()
+            setStatus(st.data)
+        } catch { /* transient poll failure, retried on next interval */ }
+    }, [])
+
     useEffect(() => {
-        if (status.running) {
-            pollRef.current = setInterval(poll, POLL_MS)
-        } else if (pollRef.current) {
-            clearInterval(pollRef.current)
-        }
+        pollRef.current = setInterval(status.running ? poll : pollStatusOnly, status.running ? POLL_MS : IDLE_POLL_MS)
         return () => { if (pollRef.current) clearInterval(pollRef.current) }
-    }, [status.running, poll])
+    }, [status.running, poll, pollStatusOnly])
+
+    // Detect a running -> stopped transition that wasn't this browser
+    // clicking Stop (e.g. sniff() died inside the collector) and flag it
+    // instead of silently reverting to the plain "Start Scan" button.
+    useEffect(() => {
+        if (wasRunningRef.current && !status.running && !stoppedByUser) {
+            setUnexpectedStop(true)
+        }
+        if (status.running) setUnexpectedStop(false)
+        wasRunningRef.current = status.running
+    }, [status.running, stoppedByUser])
 
     const handleStart = async () => {
         setLoading(true); setError('')
         try {
             const r = await scanApi.start(iface || undefined)
+            setStoppedByUser(false)
+            setUnexpectedStop(false)
             setStatus(r.data.status)
         } catch (e) {
             setError(apiErrorMessage(e, 'Failed to start scan'))
@@ -98,11 +122,24 @@ export default function LiveScanPage() {
         setLoading(true); setError('')
         try {
             const r = await scanApi.stop()
+            setStoppedByUser(true)
             setStatus(r.data.status || { ...status, running: false })
         } catch (e) {
             setError(apiErrorMessage(e, 'Failed to stop scan'))
         } finally { setLoading(false) }
     }
+
+    // Device-grouped summary of this session's flagged flows -- reuses the
+    // same aggregation the Devices page uses, so "which devices did we
+    // actually see" reads consistently across the app. detected_at falls
+    // back to the client poll timestamp since live-scan records (unlike DB
+    // rows) don't carry one.
+    const sessionDevices = useMemo(
+        () => groupByDevice(detections.map((d) => ({ ...d, detected_at: d.detected_at || d._ts }))),
+        [detections]
+    )
+
+    const monitoredIface = interfaces.find((i) => i.device === iface)
 
     const handleFlush = async () => {
         setLoading(true); setError('')
@@ -150,8 +187,22 @@ export default function LiveScanPage() {
                 </div>
             </div>
 
+            {status.running && (
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/25 text-sm text-blue-400 flex items-center gap-2">
+                    <Wifi className="w-4 h-4 flex-shrink-0" />
+                    Monitoring <strong className="font-semibold">{monitoredIface?.description || iface}</strong>
+                    {monitoredIface?.ip && <>&nbsp;—&nbsp;<span className="font-mono">{monitoredIface.ip}</span></>}
+                    &nbsp;— this is the real target machine&apos;s traffic, not a simulation.
+                </div>
+            )}
+
             {error && <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-sm text-red-400">{error}</div>}
             {ifaceErr && <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-sm text-red-400">{ifaceErr} — is Npcap installed?</div>}
+            {unexpectedStop && (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-sm text-amber-400">
+                    Scan stopped unexpectedly — check errors below and click Start Scan to resume.
+                </div>
+            )}
             {status.errors?.length > 0 && (
                 <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-sm text-red-400">
                     Capture error: {status.errors[status.errors.length - 1]}
@@ -204,6 +255,57 @@ export default function LiveScanPage() {
                     </div>
                 </GlassCard>
             </div>
+
+            {(status.running || detections.length > 0) && (
+                <GlassCard className="p-6">
+                    <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Devices Seen This Session</h3>
+                            <p className="text-xs text-slate-600 dark:text-slate-500 mt-1">Grouped by source IP/MAC from this session&apos;s flagged flows</p>
+                        </div>
+                        <button onClick={() => router.push('/dashboard/alerts?source=live')}
+                            className="text-xs text-blue-500 hover:text-blue-400 flex items-center gap-1 flex-shrink-0">
+                            View this session&apos;s alerts <ArrowRight className="w-3 h-3" />
+                        </button>
+                    </div>
+
+                    {sessionDevices.length === 0 ? (
+                        <div className="text-center py-8"><p className="text-slate-600 dark:text-slate-500 text-sm">No devices flagged yet this session</p></div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead className="border-b border-slate-200 dark:border-white/10">
+                                    <tr className="text-xs text-slate-900 dark:text-slate-500 font-medium">
+                                        <th className="text-left py-2 px-3">Source IP</th>
+                                        <th className="text-left py-2 px-3">MAC Address</th>
+                                        <th className="text-left py-2 px-3">Flagged Flows</th>
+                                        <th className="text-left py-2 px-3">Highest Risk</th>
+                                        <th className="text-left py-2 px-3">Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sessionDevices.map((device) => {
+                                        const rc = getRiskColor(device.risk)
+                                        return (
+                                            <tr key={device.src_ip || device.src_mac} className="border-b border-slate-100 dark:border-white/5">
+                                                <td className="py-2 px-3 text-xs font-mono text-slate-700 dark:text-slate-300">{device.src_ip || '—'}</td>
+                                                <td className="py-2 px-3 text-xs font-mono text-slate-500 dark:text-slate-400">{device.src_mac || '—'}</td>
+                                                <td className="py-2 px-3 text-xs text-blue-400 font-medium">{device.count}</td>
+                                                <td className="py-2 px-3">
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${rc.bg} border ${rc.border}`}>
+                                                        <StatusIcon status={rc.status} size="sm" /> {device.risk.toUpperCase()}
+                                                    </span>
+                                                </td>
+                                                <td className="py-2 px-3 text-xs text-slate-500">{fmtTime(device.lastSeen || undefined)}</td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </GlassCard>
+            )}
 
             {!status.running && detections.length === 0 && (
                 <GlassCard className="p-6">

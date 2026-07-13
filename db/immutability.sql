@@ -82,5 +82,8 @@ GRANT SELECT, INSERT ON audit_logs TO shadow_it_app;
 -- Token denylist: read/insert (logout revocation) + delete (expiry cleanup)
 GRANT SELECT, INSERT, DELETE ON token_denylist TO shadow_it_app;
 
+-- Device sightings: first-seen registry, upserted on every new device
+GRANT SELECT, INSERT, UPDATE ON device_sightings TO shadow_it_app;
+
 -- Sequences
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shadow_it_app;

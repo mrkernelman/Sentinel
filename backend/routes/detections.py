@@ -28,8 +28,9 @@ def _valid_date(value, name):
 
 
 # Whitelist filter values so only known-good tokens reach the query.
-_ALLOWED_RISK = {"high", "medium", "low"}
-_ALLOWED_TYPE = {"software", "hardware", "mixed", "none"}
+_ALLOWED_RISK   = {"high", "medium", "low"}
+_ALLOWED_TYPE   = {"software", "hardware", "mixed", "none"}
+_ALLOWED_SOURCE = {"live", "dataset"}
 
 
 def _parse_filters(args):
@@ -39,9 +40,13 @@ def _parse_filters(args):
     stype = args.get("type")
     if stype is not None and stype not in _ALLOWED_TYPE:
         raise _BadParam("Invalid 'type' filter")
+    source = args.get("source")
+    if source is not None and source not in _ALLOWED_SOURCE:
+        raise _BadParam("Invalid 'source' filter")
     return {
         "type":      stype,
         "risk":      risk,
+        "source":    source,
         "date_from": _valid_date(args.get("date_from"), "date_from"),
         "date_to":   _valid_date(args.get("date_to"), "date_to"),
     }
@@ -72,14 +77,16 @@ def list_detections():
     except (_BadParam, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
 
-    shadow_type, risk_level = f["type"], f["risk"]
-    date_from, date_to      = f["date_from"], f["date_to"]
+    shadow_type, risk_level, source = f["type"], f["risk"], f["source"]
+    date_from, date_to              = f["date_from"], f["date_to"]
 
     conds, params = [], []
     if shadow_type:
         conds.append("shadow_it_type = %s"); params.append(shadow_type)
     if risk_level:
         conds.append("risk_level = %s"); params.append(risk_level)
+    if source:
+        conds.append("source = %s"); params.append(source)
     if date_from:
         conds.append("detected_at >= %s"); params.append(date_from)
     if date_to:
@@ -110,14 +117,16 @@ def export_detections():
     except (_BadParam, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
 
-    shadow_type, risk_level = f["type"], f["risk"]
-    date_from, date_to      = f["date_from"], f["date_to"]
+    shadow_type, risk_level, source = f["type"], f["risk"], f["source"]
+    date_from, date_to              = f["date_from"], f["date_to"]
 
     conds, params = [], []
     if shadow_type:
         conds.append("shadow_it_type = %s"); params.append(shadow_type)
     if risk_level:
         conds.append("risk_level = %s"); params.append(risk_level)
+    if source:
+        conds.append("source = %s"); params.append(source)
     if date_from:
         conds.append("detected_at >= %s"); params.append(date_from)
     if date_to:
@@ -126,14 +135,14 @@ def export_detections():
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     rows = execute(
         f"SELECT id, src_ip, src_mac, dst_domain, protocol, bytes_sent, bytes_received, "
-        f"duration, device_type, shadow_it_type, risk_level, anomaly_score, is_resolved, detected_at "
+        f"duration, device_type, shadow_it_type, risk_level, anomaly_score, is_resolved, detected_at, source "
         f"FROM detections {where} ORDER BY detected_at DESC",
         params, fetch="all",
     ) or []
 
     fields = ["id", "src_ip", "src_mac", "dst_domain", "protocol", "bytes_sent",
               "bytes_received", "duration", "device_type", "shadow_it_type",
-              "risk_level", "anomaly_score", "is_resolved", "detected_at"]
+              "risk_level", "anomaly_score", "is_resolved", "detected_at", "source"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
