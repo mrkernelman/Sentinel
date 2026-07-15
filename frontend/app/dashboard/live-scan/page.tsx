@@ -193,7 +193,6 @@ export default function LiveScanPage() {
                     <Wifi className="w-4 h-4 flex-shrink-0" />
                     Monitoring <strong className="font-semibold">{monitoredIface?.description || iface}</strong>
                     {monitoredIface?.ip && <>&nbsp;—&nbsp;<span className="font-mono">{monitoredIface.ip}</span></>}
-                    &nbsp;— this is the real target machine&apos;s traffic, not a simulation.
                 </div>
             )}
 
