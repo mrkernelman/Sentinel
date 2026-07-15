@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { Play, Square, RefreshCw, Radio, Wifi, ArrowRight } from 'lucide-react'
 import GlassCard from '@/components/ui/GlassCard'
 import { StatusIcon } from '@/components/ui/StatusIcon'
+import ServiceBadge from '@/components/ui/ServiceBadge'
 import { scanApi, apiErrorMessage } from '@/lib/api'
 import { isAdmin } from '@/lib/auth'
 import { groupByDevice } from '@/lib/aggregate'
@@ -355,6 +356,7 @@ export default function LiveScanPage() {
                                         <th className="text-left py-2 px-3">Time</th>
                                         <th className="text-left py-2 px-3">Source IP</th>
                                         <th className="text-left py-2 px-3">Destination</th>
+                                        <th className="text-left py-2 px-3">Service</th>
                                         <th className="text-left py-2 px-3">Protocol</th>
                                         <th className="text-left py-2 px-3">Type</th>
                                         <th className="text-left py-2 px-3">Risk</th>
@@ -369,6 +371,7 @@ export default function LiveScanPage() {
                                                 <td className="py-2 px-3 text-xs text-slate-500">{fmtTime(d._ts)}</td>
                                                 <td className="py-2 px-3 text-xs font-mono text-slate-700 dark:text-slate-300">{d.src_ip}</td>
                                                 <td className="py-2 px-3 text-xs text-slate-700 dark:text-slate-300 max-w-[160px] truncate">{d.dst_domain || '—'}</td>
+                                                <td className="py-2 px-3"><ServiceBadge dst={d.dst_domain} /></td>
                                                 <td className="py-2 px-3 text-xs text-slate-500">{d.protocol || '—'}</td>
                                                 <td className="py-2 px-3 text-xs"><span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400">{d.shadow_it_type || '—'}</span></td>
                                                 <td className="py-2 px-3">

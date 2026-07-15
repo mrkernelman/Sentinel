@@ -96,6 +96,11 @@ def flush():
 
 
 # ── GET /api/scan/detections ───────────────────────────────────────────────────
+# The collector persists every flagged flow to the detections table itself
+# (ml/collector.py: _persist_detections, called from the flush loop) as soon
+# as it's flagged -- scans are logged whether or not anyone is polling this
+# route. This endpoint only drains the in-memory buffer so the Live Scan
+# page can show what's new since the last poll; it no longer writes to the DB.
 @scan_bp.route("/detections", methods=["GET"])
 @token_required
 @admin_required
@@ -105,39 +110,16 @@ def detections():
         return jsonify({"detections": [], "count": 0})
 
     raw = col.pop_detections()
-    saved = []
-
-    for r in raw:
-        execute(
-            """INSERT INTO detections
-               (src_ip, src_mac, dst_domain, protocol,
-                bytes_sent, bytes_received, duration, device_type,
-                shadow_it_type, risk_level, anomaly_score, source)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'live')""",
-            (
-                r["src_ip"],
-                r.get("src_mac", "Live"),
-                r.get("dst_domain", r.get("Destination IP", "Unknown")),
-                r.get("protocol", "TCP"),
-                r.get("bytes_sent", 0),
-                r.get("bytes_received", 0),
-                r.get("duration", 0),
-                r.get("device_type", "unknown"),
-                r["shadow_it_type"],
-                r["risk_level"],
-                r["anomaly_score"],
-            ),
-        )
-        saved.append(r)
-
-    return jsonify({"detections": saved, "count": len(saved)})
+    return jsonify({"detections": raw, "count": len(raw)})
 
 
 # ── GET /api/scan/devices ───────────────────────────────────────────────────
 # New devices seen since the last drain -- distinct from /detections, which
 # only ever surfaces flows that got flagged anomalous. This fires the moment
 # a device is seen at all, so it can back a "device connected" notification
-# before any threat verdict exists.
+# before any threat verdict exists. The collector already upserts
+# device_sightings itself the instant a new device is seen (ml/collector.py:
+# _persist_device); this endpoint only drains the buffer for the UI popup.
 @scan_bp.route("/devices", methods=["GET"])
 @token_required
 @admin_required
@@ -147,13 +129,4 @@ def devices():
         return jsonify({"new_devices": [], "count": 0})
 
     new = col.pop_new_devices()
-    for d in new:
-        execute(
-            """INSERT INTO device_sightings (src_ip, src_mac, source)
-               VALUES (%s, %s, 'live')
-               ON CONFLICT (src_ip, src_mac) DO UPDATE
-                 SET last_seen = NOW(), sightings_count = device_sightings.sightings_count + 1""",
-            (d["src_ip"], d["src_mac"]),
-        )
-
     return jsonify({"new_devices": new, "count": len(new)})

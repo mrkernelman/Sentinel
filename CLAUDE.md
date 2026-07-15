@@ -281,6 +281,13 @@ id, user_id→users, action, target, timestamp, ip_address, entry_hash (SHA-256)
 
 Verify chain integrity: `GET /api/audit-logs/verify`
 
+### Detection Log Immutability (added 2026-07-15)
+`detections` gets the same tamper-proof treatment as `audit_logs`, in `db/immutability.sql` (section 5) + `db_models.ensure_detections_immutability()` fallback for already-provisioned DBs:
+- **`trg_detections_no_delete`** — blocks DELETE outright, even for the admin app role or a superuser psql session.
+- **`trg_detections_guard_update`** — blocks UPDATE of every column except `is_resolved` (the Resolve button's only legitimate write, in `backend/routes/detections.py::resolve_detection`); any other column change raises an exception.
+- `shadow_it_app`'s grant on `detections` dropped `DELETE` (now `SELECT, INSERT, UPDATE` only) — belt-and-suspenders on top of the trigger.
+- Admins can still resolve alerts; nothing (app code, an admin's own DB access, or a compromised admin account) can edit or erase a detection record's actual findings.
+
 ---
 
 ## ML Model Details
@@ -327,6 +334,7 @@ Recalibrate these two constants in `ml/model.py` (`RISK_THRESHOLD_HIGH`/`RISK_TH
 - `NetworkCollector` — singleton with sniff thread + flush thread
 - `flow_timeout=15s`, `flush_interval=5s`
 - `flush_all()` — force-analyses all active flows immediately (used by "Analyze Now" button)
+- **Backend auto-persist (added 2026-07-15):** flagged flows and first-seen devices are written straight to `detections`/`device_sightings` from inside the collector itself (`_persist_detections()` in `_flush_loop`/`flush_all()`; `_persist_device()` in `_process_packet()`) — logging no longer depends on the Live Scan page being open. Previously `GET /api/scan/detections` and `GET /api/scan/devices` did the DB writes themselves, so a scan running with the browser closed (or the page navigated away) silently lost everything past the in-memory buffer. Those two routes now only drain the buffer for the UI's live view; the database write happens in the background regardless of who's watching.
 - Requires Npcap on Windows; Flask must run as Administrator
 
 ---

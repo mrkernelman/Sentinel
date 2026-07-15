@@ -34,6 +34,8 @@ def create_app() -> Flask:
         ensure_auth_schema,
         ensure_detections_source_column,
         ensure_device_sightings_schema,
+        ensure_known_assets_schema,
+        ensure_detections_immutability,
     )
     try:
         ensure_auth_schema()
@@ -47,6 +49,14 @@ def create_app() -> Flask:
         ensure_device_sightings_schema()
     except Exception as exc:
         log.warning("Could not ensure device_sightings schema at startup: %s", exc)
+    try:
+        ensure_known_assets_schema()
+    except Exception as exc:
+        log.warning("Could not ensure known_assets schema at startup: %s", exc)
+    try:
+        ensure_detections_immutability()
+    except Exception as exc:
+        log.warning("Could not ensure detections immutability triggers at startup: %s", exc)
 
     from backend.routes.auth       import auth_bp
     from backend.routes.detections import detections_bp
@@ -56,6 +66,7 @@ def create_app() -> Flask:
     from backend.routes.scan       import scan_bp
     from backend.routes.report     import report_bp
     from backend.routes.devices    import devices_bp
+    from backend.routes.known_assets import known_assets_bp
 
     app.register_blueprint(auth_bp,       url_prefix="/api/auth")
     app.register_blueprint(detections_bp, url_prefix="/api/detections")
@@ -65,6 +76,7 @@ def create_app() -> Flask:
     app.register_blueprint(scan_bp,       url_prefix="/api/scan")
     app.register_blueprint(report_bp,     url_prefix="/api/report")
     app.register_blueprint(devices_bp,    url_prefix="/api/devices")
+    app.register_blueprint(known_assets_bp, url_prefix="/api")
 
     # ── POST /api/run-detection  (admin only) ──────────────────────────────────
     from backend.middleware.jwt_auth import token_required
