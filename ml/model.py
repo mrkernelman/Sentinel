@@ -44,6 +44,20 @@ def is_sanctioned(host: str, allowlist: set[str]) -> bool:
     return any(host == e or host.endswith("." + e) for e in allowlist)
 
 
+def load_db_known_apps() -> set[str]:
+    """Admin-curated known-applications domains (known_applications table,
+    managed from the dashboard's Known Assets page) — merged into the
+    file-based allowlist above. Best-effort: returns empty on any DB error
+    (e.g. training/evaluation scripts run with no DB configured at all) so
+    detect() always degrades gracefully rather than failing."""
+    try:
+        from backend.models.db_models import execute
+        rows = execute("SELECT domain FROM known_applications", fetch="all") or []
+        return {r["domain"].strip().lower() for r in rows if r.get("domain")}
+    except Exception:
+        return set()
+
+
 # ── Risk classification ────────────────────────────────────────────────────────
 # Thresholds are empirical tertiles of the IF anomaly_score distribution on
 # hybrid-flagged records (RF positive OR IF below gate) — NOT the theoretical
@@ -208,7 +222,7 @@ def detect(records):
     if rf is not None:
         flagged |= rf.predict(X) == 1
 
-    allowlist  = load_allowlist()
+    allowlist  = load_allowlist() | load_db_known_apps()
     suppressed = 0
 
     results = []

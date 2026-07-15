@@ -8,7 +8,7 @@ import { authApi, statsApi, scanApi } from '@/lib/api'
 import {
     Search, Bell, Moon, Sun, UserCircle, Settings, LogOut,
     LayoutDashboard, AlertCircle, Monitor, Package, FileText, BarChart3, Wifi,
-    X, Shield, Menu,
+    X, Shield, Menu, ShieldCheck, Trash2,
 } from 'lucide-react'
 
 const SEARCH_INDEX = [
@@ -16,6 +16,7 @@ const SEARCH_INDEX = [
     { label: 'Alerts',       description: 'Security alerts & detections',     href: '/dashboard/alerts',       icon: AlertCircle,     keywords: ['alerts','detections','anomaly','flagged'] },
     { label: 'Devices',      description: 'Device inventory & risk scores',   href: '/dashboard/devices',      icon: Monitor,         keywords: ['devices','device','laptop','desktop','server'] },
     { label: 'Applications', description: 'Application monitoring & control', href: '/dashboard/applications', icon: Package,         keywords: ['applications','apps','software'] },
+    { label: 'Known Assets', description: 'Known devices & approved applications', href: '/dashboard/known-assets', icon: ShieldCheck, keywords: ['known','assets','allowlist','sanctioned','approved'] },
     { label: 'Reports',      description: 'Model performance & test scenarios', href: '/dashboard/reports',    icon: BarChart3,       keywords: ['reports','metrics','performance','accuracy','scenarios'] },
     { label: 'Live Scan',    description: 'Real-time packet capture',         href: '/dashboard/live-scan',    icon: Wifi,            keywords: ['live','scan','capture','packet','scapy'] },
     { label: 'Audit Trail',  description: 'Compliance & activity logs',       href: '/dashboard/audit',        icon: FileText,        keywords: ['audit','trail','logs','compliance','history','activity'] },
@@ -45,6 +46,12 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
     const [activeIndex,      setActiveIndex]      = useState(0)
     const [highUnresolved,   setHighUnresolved]   = useState(0)
     const [newDeviceCount,   setNewDeviceCount]   = useState(0)
+    // "Cleared" baseline for the high-risk badge -- a purely visual dismiss,
+    // not a bulk-resolve. The badge only shows alerts *beyond* this baseline
+    // (localStorage 'notif_dismissed_high'), so it reappears the moment the
+    // real unresolved count climbs past what was last seen, but resolving
+    // detections stays a deliberate action taken on the Alerts page.
+    const [dismissedHigh,    setDismissedHigh]    = useState(0)
 
     const searchRef  = useRef<HTMLDivElement>(null)
     const inputRef   = useRef<HTMLInputElement>(null)
@@ -59,6 +66,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         const saved = localStorage.getItem('darkMode')
         if (saved !== null) setIsDarkMode(JSON.parse(saved))
         else setIsDarkMode(document.documentElement.classList.contains('dark'))
+        setDismissedHigh(Number(localStorage.getItem('notif_dismissed_high') || 0))
     }, [])
 
     useEffect(() => {
@@ -152,6 +160,14 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
     }
 
     useEffect(() => () => clearNotifTimer(), [])
+
+    const visibleHigh = Math.max(0, highUnresolved - dismissedHigh)
+
+    const clearNotifications = () => {
+        setDismissedHigh(highUnresolved)
+        localStorage.setItem('notif_dismissed_high', String(highUnresolved))
+        setNewDeviceCount(0)
+    }
 
     // Use CSS variables so the dropdown always matches the theme
     // regardless of whether the Tailwind `dark` class is set
@@ -268,9 +284,9 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
                             title="Unresolved high-risk alerts"
                         >
                             <Bell className="w-5 h-5 text-slate-400 dark:text-white" />
-                            {highUnresolved > 0 && (
+                            {(visibleHigh + newDeviceCount) > 0 && (
                                 <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white pointer-events-none">
-                                    {highUnresolved > 99 ? '99+' : highUnresolved}
+                                    {(visibleHigh + newDeviceCount) > 99 ? '99+' : visibleHigh + newDeviceCount}
                                 </span>
                             )}
                         </motion.button>
@@ -289,24 +305,38 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
                                     onMouseLeave={startNotifTimer}
                                 >
                                     {/* Header */}
-                                    <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2" style={{ background: 'var(--bg-surface)' }}>
-                                        <Bell className="w-4 h-4 text-blue-500 dark:text-blue-400" />
-                                        <span className="text-sm font-semibold text-white">Unresolved High-Risk Alerts</span>
+                                    <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-2" style={{ background: 'var(--bg-surface)' }}>
+                                        <div className="flex items-center gap-2">
+                                            <Bell className="w-4 h-4 text-blue-500 dark:text-blue-400" />
+                                            <span className="text-sm font-semibold text-white">Notifications</span>
+                                        </div>
+                                        {(visibleHigh > 0 || newDeviceCount > 0) && (
+                                            <button
+                                                onClick={clearNotifications}
+                                                title="Dismiss — doesn't resolve anything, just clears this badge"
+                                                className="flex items-center gap-1 text-xs text-slate-400 hover:text-white transition-colors"
+                                            >
+                                                <Trash2 className="w-3 h-3" /> Clear
+                                            </button>
+                                        )}
                                     </div>
 
                                     <button
                                         onClick={() => { closeNotif(); router.push('/dashboard/alerts?risk=high') }}
                                         className="w-full text-left px-4 py-4 transition-colors hover:bg-white/5"
                                     >
-                                        {highUnresolved > 0 ? (
+                                        {visibleHigh > 0 ? (
                                             <div className="flex items-center gap-3">
                                                 <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
                                                 <p className="text-sm text-white">
-                                                    <span className="font-bold text-red-400">{highUnresolved}</span> unresolved high-risk detection{highUnresolved === 1 ? '' : 's'} — view alerts →
+                                                    <span className="font-bold text-red-400">{visibleHigh}</span> new unresolved high-risk detection{visibleHigh === 1 ? '' : 's'} — view alerts →
                                                 </p>
                                             </div>
                                         ) : (
-                                            <p className="text-sm text-slate-400">No unresolved high-risk alerts</p>
+                                            <p className="text-sm text-slate-400">
+                                                No new high-risk alerts
+                                                {highUnresolved > 0 && ` (${highUnresolved} still unresolved — view alerts →)`}
+                                            </p>
                                         )}
                                     </button>
 

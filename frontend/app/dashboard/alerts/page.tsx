@@ -7,10 +7,14 @@ import AnimatedCounter from '@/components/ui/AnimatedCounter'
 import { StatusIcon } from '@/components/ui/StatusIcon'
 import {
     TrendingUp, AlertCircle, CheckCircle, X, ChevronLeft, ChevronRight, Download, Loader2,
+    Activity, ShieldCheck, Info,
 } from 'lucide-react'
-import { detectionsApi, statsApi } from '@/lib/api'
+import Link from 'next/link'
+import { detectionsApi, statsApi, knownAssetsApi } from '@/lib/api'
 import { isAdmin } from '@/lib/auth'
-import type { Detection, DashboardSummary } from '@/lib/types'
+import { resolveService } from '@/lib/services'
+import ServiceBadge from '@/components/ui/ServiceBadge'
+import type { Detection, DashboardSummary, KnownDevice } from '@/lib/types'
 
 const getRiskColor = (risk: string | null) => {
     switch (risk) {
@@ -42,6 +46,9 @@ function AlertsPageInner() {
     const [resolving, setResolving] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [summary, setSummary] = useState<DashboardSummary | null>(null)
+    const [knownDevices, setKnownDevices] = useState<KnownDevice[]>([])
+    const [deviceActivity, setDeviceActivity] = useState<Detection[]>([])
+    const [activityLoading, setActivityLoading] = useState(false)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -62,6 +69,24 @@ function AlertsPageInner() {
     useEffect(() => { load() }, [load])
     useEffect(() => { statsApi.get().then((r) => setSummary(r.data)).catch(() => {}) }, [])
     useEffect(() => { setPage(1) }, [typeFilter, riskFilter])
+    useEffect(() => {
+        knownAssetsApi.devices().then((r) => setKnownDevices(r.data.devices || [])).catch(() => {})
+    }, [])
+
+    // Recent activity from the same device (src_ip), for the Device Activity
+    // card on the alert detail panel -- gives context beyond the single
+    // flagged flow ("what else has this device been doing").
+    useEffect(() => {
+        if (!selected?.src_ip) { setDeviceActivity([]); return }
+        setActivityLoading(true)
+        detectionsApi.list({ src_ip: selected.src_ip, per_page: 6 })
+            .then((r) => setDeviceActivity((r.data.detections || []).filter((d: Detection) => d.id !== selected.id)))
+            .catch(() => setDeviceActivity([]))
+            .finally(() => setActivityLoading(false))
+    }, [selected?.src_ip, selected?.id])
+
+    const knownDeviceFor = (d: Detection) =>
+        knownDevices.find((k) => (k.src_ip && k.src_ip === d.src_ip) || (k.src_mac && k.src_mac === d.src_mac))
 
     const markResolved = useCallback(async (id: number) => {
         setResolving(true)
@@ -169,6 +194,7 @@ function AlertsPageInner() {
                                         <th className="text-left py-3 px-4">Timestamp</th>
                                         <th className="text-left py-3 px-4">Source IP</th>
                                         <th className="text-left py-3 px-4">Destination</th>
+                                        <th className="text-left py-3 px-4">Service</th>
                                         <th className="text-left py-3 px-4">Type</th>
                                         <th className="text-left py-3 px-4">Source</th>
                                         <th className="text-left py-3 px-4">Risk Level</th>
@@ -187,6 +213,7 @@ function AlertsPageInner() {
                                                 <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-400">{formatTimestamp(detection.detected_at)}</td>
                                                 <td className="py-3 px-4 text-xs font-mono text-slate-700 dark:text-slate-300">{detection.src_ip}</td>
                                                 <td className="py-3 px-4 text-xs text-slate-700 dark:text-slate-300 max-w-[180px] truncate">{detection.dst_domain || '—'}</td>
+                                                <td className="py-3 px-4"><ServiceBadge dst={detection.dst_domain} /></td>
                                                 <td className="py-3 px-4 text-xs"><span className="px-2 py-1 rounded bg-blue-500/20 text-blue-300">{detection.shadow_it_type || 'Unknown'}</span></td>
                                                 <td className="py-3 px-4 text-xs">
                                                     <span className={`px-2 py-1 rounded ${detection.source === 'live' ? 'bg-red-500/15 text-red-400' : 'bg-slate-500/15 text-slate-400'}`}>
@@ -261,9 +288,55 @@ function AlertsPageInner() {
                                     </button>
                                 </div>
 
-                                <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium mb-6 ${getRiskColor(selected.risk_level).bg} border ${getRiskColor(selected.risk_level).border}`}>
+                                <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium mb-3 ${getRiskColor(selected.risk_level).bg} border ${getRiskColor(selected.risk_level).border}`}>
                                     <StatusIcon status={getRiskColor(selected.risk_level).status} size="sm" />
                                     <span className={getRiskColor(selected.risk_level).text}>{selected.risk_level?.toUpperCase()} RISK</span>
+                                </div>
+
+                                <div className="mb-6 p-3 rounded-lg bg-blue-500/5 border border-blue-500/15 flex items-start gap-2">
+                                    <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                                    <p className="text-xs text-slate-400 leading-relaxed">
+                                        Risk reflects how statistically unusual this traffic&apos;s shape is (packet
+                                        timing, size, flags) — not the destination&apos;s reputation. A well-known
+                                        service can still be flagged if the model has never seen it marked safe.{' '}
+                                        {isAdmin() && (
+                                            <Link href="/dashboard/known-assets" className="text-blue-400 hover:underline">
+                                                Mark trusted destinations as Known →
+                                            </Link>
+                                        )}
+                                    </p>
+                                </div>
+
+                                {/* Device Activity */}
+                                <div className="mb-6 p-4 rounded-lg bg-white/3 border border-white/10">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Activity className="w-4 h-4 text-amber-400" />
+                                        <span className="text-sm font-semibold text-white">Device Activity</span>
+                                    </div>
+                                    <p className="text-xs text-slate-400 mb-3 flex items-center gap-1.5">
+                                        {knownDeviceFor(selected) ? (
+                                            <><ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> {knownDeviceFor(selected)!.name}</>
+                                        ) : (
+                                            <>{selected.device_type || 'Unnamed device'}</>
+                                        )}
+                                        <span className="text-slate-600">·</span>
+                                        <span className="font-mono">{selected.src_ip}</span>
+                                    </p>
+                                    {activityLoading ? (
+                                        <div className="py-3 text-center"><Loader2 className="w-4 h-4 animate-spin mx-auto text-slate-500" /></div>
+                                    ) : deviceActivity.length === 0 ? (
+                                        <p className="text-xs text-slate-500">No other recent detections from this device.</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {deviceActivity.map((d) => (
+                                                <div key={d.id} className="flex items-center justify-between text-xs py-1.5 border-b border-white/5 last:border-0">
+                                                    <span className="text-slate-300 truncate max-w-[160px]">{d.dst_domain || '—'}</span>
+                                                    <span className={`px-1.5 py-0.5 rounded font-medium ${getRiskColor(d.risk_level).text}`}>{d.risk_level?.toUpperCase()}</span>
+                                                    <span className="text-slate-500">{formatTimestamp(d.detected_at)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="space-y-4">
@@ -272,6 +345,7 @@ function AlertsPageInner() {
                                         { label: 'Source IP', value: selected.src_ip, mono: true },
                                         { label: 'MAC Address', value: selected.src_mac || '—', mono: true },
                                         { label: 'Destination', value: selected.dst_domain || '—' },
+                                        { label: 'Service', value: resolveService(selected.dst_domain)?.name || 'Unknown' },
                                         { label: 'Protocol', value: selected.protocol || '—' },
                                         { label: 'Device Type', value: selected.device_type || '—' },
                                         { label: 'Shadow IT Type', value: selected.shadow_it_type || '—' },

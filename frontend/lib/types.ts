@@ -143,3 +143,20 @@ export interface DeviceSighting {
     last_seen: string
     sightings_count: number
 }
+
+export interface KnownDevice {
+    id: number
+    src_ip: string | null
+    src_mac: string | null
+    name: string
+    notes: string | null
+    created_at: string
+}
+
+export interface KnownApplication {
+    id: number
+    domain: string
+    name: string
+    notes: string | null
+    created_at: string
+}

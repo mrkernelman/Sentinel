@@ -1,5 +1,5 @@
 import { detectionsApi } from './api'
-import type { Detection, DetectionSource, RiskLevel, ShadowItType, DeviceSighting } from './types'
+import type { Detection, DetectionSource, RiskLevel, ShadowItType, DeviceSighting, KnownDevice } from './types'
 
 const RISK_RANK: Record<RiskLevel, number> = { high: 3, medium: 2, low: 1 }
 const higherRisk = (a: RiskLevel, b: RiskLevel) => (RISK_RANK[b] > RISK_RANK[a] ? b : a)
@@ -29,27 +29,23 @@ export interface DeviceAggregate {
     count: number
     risk: RiskLevel
     lastSeen: string | null
-    // Filled in by mergeDeviceSightings() from /api/devices/sightings --
+    // Most frequently seen dst_domain for this device, used to surface a
+    // "top service" (see lib/services.ts) even though a device can talk to
+    // many destinations -- this is a representative one, not the only one.
+    topDestination: string | null
     // undefined until a device_sightings row exists for this device (e.g. a
     // device only known from dataset-run detections was never actually
     // "seen" by the live collector).
     firstSeen?: string
     source?: DetectionSource
-}
-
-// Merges the durable first-seen registry (ml/collector.py, via
-// /api/devices/sightings) into the detection-derived aggregate, keyed the
-// same way groupByDevice() keys its map (src_ip, falling back to src_mac).
-export function mergeDeviceSightings(devices: DeviceAggregate[], sightings: DeviceSighting[]): DeviceAggregate[] {
-    const byKey = new Map(sightings.map((s) => [s.src_ip || s.src_mac || 'unknown', s]))
-    return devices.map((d) => {
-        const s = byKey.get(d.src_ip || d.src_mac || 'unknown')
-        return s ? { ...d, firstSeen: s.first_seen, source: s.source } : d
-    })
+    // Set when this device matches an admin-curated known_devices entry
+    // (Known Assets page) by src_ip or src_mac.
+    knownName?: string | null
 }
 
 export function groupByDevice(rows: Detection[]): DeviceAggregate[] {
     const map = new Map<string, DeviceAggregate>()
+    const destCounts = new Map<string, Map<string, number>>()
     for (const d of rows) {
         const key = d.src_ip || d.src_mac || 'unknown'
         if (!map.has(key)) {
@@ -60,6 +56,7 @@ export function groupByDevice(rows: Detection[]): DeviceAggregate[] {
                 count: 0,
                 risk: 'low',
                 lastSeen: d.detected_at,
+                topDestination: null,
             })
         }
         const entry = map.get(key)!
@@ -68,8 +65,72 @@ export function groupByDevice(rows: Detection[]): DeviceAggregate[] {
         if (d.detected_at && (!entry.lastSeen || d.detected_at > entry.lastSeen)) {
             entry.lastSeen = d.detected_at
         }
+        if (d.dst_domain) {
+            if (!destCounts.has(key)) destCounts.set(key, new Map())
+            const counts = destCounts.get(key)!
+            counts.set(d.dst_domain, (counts.get(d.dst_domain) ?? 0) + 1)
+        }
+    }
+    for (const [key, entry] of map) {
+        const counts = destCounts.get(key)
+        if (counts) {
+            entry.topDestination = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+        }
     }
     return [...map.values()].sort((a, b) => b.count - a.count)
+}
+
+// Builds the full Device Inventory: every device the durable sightings
+// registry (device_sightings, populated the instant anything is seen on the
+// wire) has ever recorded, enriched with detection stats where they exist --
+// not just the subset of devices that happen to have triggered an anomaly.
+// Also includes devices known only from dataset-run detections (no live
+// sighting), and cross-references known_devices for a friendly name.
+export function buildDeviceInventory(
+    detectionRows: Detection[],
+    sightings: DeviceSighting[],
+    known: KnownDevice[] = []
+): DeviceAggregate[] {
+    const fromDetections = groupByDevice(detectionRows)
+    const byKey = new Map(fromDetections.map((d) => [d.src_ip || d.src_mac || 'unknown', d]))
+
+    const knownByKey = new Map<string, KnownDevice>()
+    for (const k of known) {
+        if (k.src_ip) knownByKey.set(k.src_ip, k)
+        if (k.src_mac) knownByKey.set(k.src_mac, k)
+    }
+    const knownNameFor = (ip: string | null, mac: string | null) =>
+        (ip && knownByKey.get(ip)?.name) || (mac && knownByKey.get(mac)?.name) || null
+
+    const seenKeys = new Set<string>()
+    const result: DeviceAggregate[] = []
+
+    for (const s of sightings) {
+        const key = s.src_ip || s.src_mac || 'unknown'
+        seenKeys.add(key)
+        const det = byKey.get(key)
+        result.push({
+            src_ip: s.src_ip,
+            src_mac: s.src_mac,
+            device_type: det?.device_type ?? null,
+            count: det?.count ?? 0,
+            risk: det?.risk ?? 'low',
+            lastSeen: det?.lastSeen ?? s.last_seen,
+            topDestination: det?.topDestination ?? null,
+            firstSeen: s.first_seen,
+            source: s.source,
+            knownName: knownNameFor(s.src_ip, s.src_mac),
+        })
+    }
+    // Devices only known from detections (e.g. a dataset-run row never
+    // actually sighted live).
+    for (const d of fromDetections) {
+        const key = d.src_ip || d.src_mac || 'unknown'
+        if (seenKeys.has(key)) continue
+        result.push({ ...d, knownName: knownNameFor(d.src_ip, d.src_mac) })
+    }
+
+    return result.sort((a, b) => b.count - a.count)
 }
 
 export interface ApplicationAggregate {

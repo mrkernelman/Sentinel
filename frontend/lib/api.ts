@@ -86,4 +86,15 @@ export const devicesApi = {
     sightings: () => api.get('/api/devices/sightings'),
 }
 
+export const knownAssetsApi = {
+    devices: () => api.get('/api/known-devices'),
+    addDevice: (data: { src_ip?: string; src_mac?: string; name: string; notes?: string }) =>
+        api.post('/api/known-devices', data),
+    removeDevice: (id: number) => api.delete(`/api/known-devices/${id}`),
+    applications: () => api.get('/api/known-applications'),
+    addApplication: (data: { domain: string; name: string; notes?: string }) =>
+        api.post('/api/known-applications', data),
+    removeApplication: (id: number) => api.delete(`/api/known-applications/${id}`),
+}
+
 export default api

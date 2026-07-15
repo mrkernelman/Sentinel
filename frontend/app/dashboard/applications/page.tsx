@@ -6,8 +6,13 @@ import { useIsDark, chartTooltipStyles } from '@/lib/useIsDark'
 import GlassCard from '@/components/ui/GlassCard'
 import AnimatedCounter from '@/components/ui/AnimatedCounter'
 import { StatusIcon } from '@/components/ui/StatusIcon'
-import { Package, AlertTriangle, Loader2 } from 'lucide-react'
+import { Package, AlertTriangle, Loader2, ShieldCheck } from 'lucide-react'
+import Link from 'next/link'
 import { fetchAllDetections, groupByApplication, type ApplicationAggregate } from '@/lib/aggregate'
+import { matchesKnownDomain } from '@/lib/services'
+import { knownAssetsApi } from '@/lib/api'
+import { isAdmin } from '@/lib/auth'
+import ServiceBadge from '@/components/ui/ServiceBadge'
 
 const TYPE_COLORS: Record<string, string> = {
     software: '#3b82f6',
@@ -37,7 +42,9 @@ function formatLastSeen(iso: string | null) {
 export default function ApplicationsPage() {
     const isDark = useIsDark()
     const tt = chartTooltipStyles(isDark)
+    const admin = isAdmin()
     const [apps, setApps] = useState<ApplicationAggregate[]>([])
+    const [knownDomains, setKnownDomains] = useState<string[]>([])
     const [scanned, setScanned] = useState(0)
     const [loading, setLoading] = useState(true)
 
@@ -45,8 +52,12 @@ export default function ApplicationsPage() {
         (async () => {
             setLoading(true)
             try {
-                const { rows } = await fetchAllDetections(500)
+                const [{ rows }, knownRes] = await Promise.all([
+                    fetchAllDetections(500),
+                    knownAssetsApi.applications().catch(() => ({ data: { applications: [] } })),
+                ])
                 setApps(groupByApplication(rows))
+                setKnownDomains((knownRes.data.applications || []).map((a: { domain: string }) => a.domain))
                 setScanned(rows.length)
             } catch (err) {
                 console.error(err)
@@ -144,19 +155,33 @@ export default function ApplicationsPage() {
                             <thead className="border-b border-slate-200 dark:border-white/10">
                                 <tr className="text-xs text-slate-900 dark:text-slate-500 font-medium">
                                     <th className="text-left py-3 px-4">Destination</th>
+                                    <th className="text-left py-3 px-4">Service</th>
+                                    <th className="text-left py-3 px-4">Known</th>
                                     <th className="text-left py-3 px-4">Type</th>
                                     <th className="text-left py-3 px-4">Detections</th>
                                     <th className="text-left py-3 px-4">Highest Risk</th>
                                     <th className="text-left py-3 px-4">Last Seen</th>
+                                    {admin && <th className="text-left py-3 px-4">Action</th>}
                                 </tr>
                             </thead>
                             <tbody>
                                 {apps.map((app) => {
                                     const riskConfig = getRiskColor(app.risk)
+                                    const known = matchesKnownDomain(app.dst_domain, knownDomains)
                                     return (
                                         <motion.tr key={app.dst_domain} whileHover={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
                                             className="border-b border-slate-200 dark:border-white/5">
                                             <td className="py-3 px-4 text-xs font-medium text-slate-900 dark:text-white max-w-[220px] truncate">{app.dst_domain}</td>
+                                            <td className="py-3 px-4"><ServiceBadge dst={app.dst_domain} /></td>
+                                            <td className="py-3 px-4 text-xs">
+                                                {known ? (
+                                                    <span className="inline-flex items-center gap-1 text-emerald-500 dark:text-emerald-400">
+                                                        <ShieldCheck className="w-3.5 h-3.5" /> Known
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-slate-400 dark:text-slate-600">—</span>
+                                                )}
+                                            </td>
                                             <td className="py-3 px-4 text-xs">
                                                 <span
                                                     className="px-2 py-1 rounded text-xs font-medium capitalize"
@@ -176,6 +201,18 @@ export default function ApplicationsPage() {
                                                 </div>
                                             </td>
                                             <td className="py-3 px-4 text-xs text-slate-500">{formatLastSeen(app.lastSeen)}</td>
+                                            {admin && (
+                                                <td className="py-3 px-4">
+                                                    {!known && (
+                                                        <Link
+                                                            href={`/dashboard/known-assets?addAppDomain=${encodeURIComponent(app.dst_domain)}`}
+                                                            className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all whitespace-nowrap"
+                                                        >
+                                                            Mark as Known
+                                                        </Link>
+                                                    )}
+                                                </td>
+                                            )}
                                         </motion.tr>
                                     )
                                 })}

@@ -63,6 +63,32 @@ CREATE TABLE IF NOT EXISTS device_sightings (
     UNIQUE (src_ip, src_mac)
 );
 
+-- Admin-curated "known good" registry -- devices/apps the organization
+-- already knows about (Known Assets page). Distinct from device_sightings
+-- (auto-populated the moment anything is seen) and the ML's on-disk
+-- sanctioned_services.txt: known_applications feeds detect()'s allowlist
+-- (see ml/model.py: load_db_known_apps()) and known_devices gives the
+-- Devices page a friendly name instead of a MAC-vendor guess.
+CREATE TABLE IF NOT EXISTS known_devices (
+    id          SERIAL PRIMARY KEY,
+    src_ip      VARCHAR(45),
+    src_mac     VARCHAR(17),
+    name        VARCHAR(100) NOT NULL,
+    notes       TEXT,
+    added_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (src_ip IS NOT NULL OR src_mac IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS known_applications (
+    id          SERIAL PRIMARY KEY,
+    domain      VARCHAR(255) NOT NULL UNIQUE,
+    name        VARCHAR(100) NOT NULL,
+    notes       TEXT,
+    added_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_detections_detected_at    ON detections(detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_detections_risk_level     ON detections(risk_level);
 CREATE INDEX IF NOT EXISTS idx_detections_shadow_it_type ON detections(shadow_it_type);

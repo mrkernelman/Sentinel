@@ -4,9 +4,12 @@ import { motion } from 'framer-motion'
 import GlassCard from '@/components/ui/GlassCard'
 import AnimatedCounter from '@/components/ui/AnimatedCounter'
 import { StatusIcon } from '@/components/ui/StatusIcon'
-import { Monitor, AlertCircle, Loader2 } from 'lucide-react'
-import { fetchAllDetections, groupByDevice, mergeDeviceSightings, type DeviceAggregate } from '@/lib/aggregate'
-import { devicesApi } from '@/lib/api'
+import { Monitor, AlertCircle, Loader2, ShieldCheck } from 'lucide-react'
+import { fetchAllDetections, buildDeviceInventory, type DeviceAggregate } from '@/lib/aggregate'
+import { devicesApi, knownAssetsApi } from '@/lib/api'
+import { isAdmin } from '@/lib/auth'
+import ServiceBadge from '@/components/ui/ServiceBadge'
+import Link from 'next/link'
 
 const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -28,6 +31,7 @@ function formatLastSeen(iso: string | null) {
 }
 
 export default function DevicesPage() {
+    const admin = isAdmin()
     const [devices, setDevices] = useState<DeviceAggregate[]>([])
     const [scanned, setScanned] = useState(0)
     const [loading, setLoading] = useState(true)
@@ -36,11 +40,12 @@ export default function DevicesPage() {
         (async () => {
             setLoading(true)
             try {
-                const [{ rows }, sightingsRes] = await Promise.all([
+                const [{ rows }, sightingsRes, knownRes] = await Promise.all([
                     fetchAllDetections(500),
                     devicesApi.sightings().catch(() => ({ data: { devices: [] } })),
+                    knownAssetsApi.devices().catch(() => ({ data: { devices: [] } })),
                 ])
-                setDevices(mergeDeviceSightings(groupByDevice(rows), sightingsRes.data.devices || []))
+                setDevices(buildDeviceInventory(rows, sightingsRes.data.devices || [], knownRes.data.devices || []))
                 setScanned(rows.length)
             } catch (err) {
                 console.error(err)
@@ -80,7 +85,7 @@ export default function DevicesPage() {
                 <div className="flex items-center justify-between mb-6">
                     <div>
                         <h3 className="text-xl font-semibold text-slate-900 dark:text-white">Device Inventory</h3>
-                        <p className="text-xs text-slate-700 dark:text-slate-500 mt-1">Aggregated from up to {scanned.toLocaleString()} recent detections, grouped by source IP/MAC</p>
+                        <p className="text-xs text-slate-700 dark:text-slate-500 mt-1">Every device ever sighted on the network, enriched with stats from up to {scanned.toLocaleString()} recent detections</p>
                     </div>
                     <span className="text-xs text-slate-500">{devices.length} device{devices.length !== 1 ? 's' : ''}</span>
                 </div>
@@ -94,13 +99,16 @@ export default function DevicesPage() {
                         <table className="w-full text-sm">
                             <thead className="border-b border-slate-200 dark:border-white/10">
                                 <tr className="text-xs text-slate-900 dark:text-slate-500 font-medium">
+                                    <th className="text-left py-3 px-4">Device</th>
                                     <th className="text-left py-3 px-4">Source IP</th>
                                     <th className="text-left py-3 px-4">MAC Address</th>
-                                    <th className="text-left py-3 px-4">Device Type</th>
+                                    <th className="text-left py-3 px-4">Hardware</th>
+                                    <th className="text-left py-3 px-4">Top Service</th>
                                     <th className="text-left py-3 px-4">Detections</th>
                                     <th className="text-left py-3 px-4">Highest Risk</th>
                                     <th className="text-left py-3 px-4">First Seen</th>
                                     <th className="text-left py-3 px-4">Last Seen</th>
+                                    {admin && <th className="text-left py-3 px-4">Action</th>}
                                 </tr>
                             </thead>
                             <tbody>
@@ -109,9 +117,19 @@ export default function DevicesPage() {
                                     return (
                                         <motion.tr key={device.src_ip || device.src_mac} whileHover={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
                                             className="border-b border-slate-200 dark:border-white/5">
+                                            <td className="py-3 px-4 text-xs">
+                                                {device.knownName ? (
+                                                    <span className="inline-flex items-center gap-1.5 font-medium text-slate-900 dark:text-white">
+                                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" /> {device.knownName}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-slate-500 dark:text-slate-500">Unnamed device</span>
+                                                )}
+                                            </td>
                                             <td className="py-3 px-4 text-xs font-mono text-slate-700 dark:text-slate-300">{device.src_ip || '—'}</td>
                                             <td className="py-3 px-4 text-xs font-mono text-slate-500 dark:text-slate-400">{device.src_mac || '—'}</td>
-                                            <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-400 capitalize">{device.device_type || '—'}</td>
+                                            <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-400">{device.device_type || '—'}</td>
+                                            <td className="py-3 px-4"><ServiceBadge dst={device.topDestination} /></td>
                                             <td className="py-3 px-4 text-xs text-blue-400 font-medium">{device.count}</td>
                                             <td className="py-3 px-4">
                                                 <div className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${riskConfig.bg} border ${riskConfig.border}`}>
@@ -120,6 +138,18 @@ export default function DevicesPage() {
                                             </td>
                                             <td className="py-3 px-4 text-xs text-slate-500">{formatLastSeen(device.firstSeen ?? null)}</td>
                                             <td className="py-3 px-4 text-xs text-slate-500">{formatLastSeen(device.lastSeen)}</td>
+                                            {admin && (
+                                                <td className="py-3 px-4">
+                                                    {!device.knownName && (
+                                                        <Link
+                                                            href={`/dashboard/known-assets?addDeviceIp=${encodeURIComponent(device.src_ip || '')}&addDeviceMac=${encodeURIComponent(device.src_mac || '')}`}
+                                                            className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all whitespace-nowrap"
+                                                        >
+                                                            Mark as Known
+                                                        </Link>
+                                                    )}
+                                                </td>
+                                            )}
                                         </motion.tr>
                                     )
                                 })}

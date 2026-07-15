@@ -47,6 +47,7 @@ def _parse_filters(args):
         "type":      stype,
         "risk":      risk,
         "source":    source,
+        "src_ip":    args.get("src_ip") or None,
         "date_from": _valid_date(args.get("date_from"), "date_from"),
         "date_to":   _valid_date(args.get("date_to"), "date_to"),
     }
@@ -78,6 +79,7 @@ def list_detections():
         return jsonify({"error": str(exc)}), 400
 
     shadow_type, risk_level, source = f["type"], f["risk"], f["source"]
+    src_ip                          = f["src_ip"]
     date_from, date_to              = f["date_from"], f["date_to"]
 
     conds, params = [], []
@@ -87,6 +89,8 @@ def list_detections():
         conds.append("risk_level = %s"); params.append(risk_level)
     if source:
         conds.append("source = %s"); params.append(source)
+    if src_ip:
+        conds.append("src_ip = %s"); params.append(src_ip)
     if date_from:
         conds.append("detected_at >= %s"); params.append(date_from)
     if date_to:
